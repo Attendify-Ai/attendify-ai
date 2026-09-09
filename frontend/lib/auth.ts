@@ -2,7 +2,10 @@ export interface AuthUser {
   id: number;
   name: string;
   email: string;
-  role: "admin" | "teacher";
+  role: "admin" | "teacher" | "house_manager";
+  assigned_house_id?: number | null;
+  assigned_house_name?: string | null;
+  assigned_class?: string | null;
 }
 
 export function getStoredUser(): AuthUser | null {
@@ -27,4 +30,21 @@ export function clearAuth() {
 
 export function isAdmin(): boolean {
   return getStoredUser()?.role === "admin";
+}
+
+export function isHouseManager(): boolean {
+  return getStoredUser()?.role === "house_manager";
+}
+
+export function dashboardHome(role?: string | null): string {
+  if (role === "teacher") return "/teacher-dashboard";
+  if (role === "house_manager") return "/house-dashboard";
+  return "/dashboard";
+}
+
+export function roleLabel(user: AuthUser): string {
+  if (user.role === "admin") return "Admin";
+  if (user.role === "teacher") return user.assigned_class ? `Class Teacher | ${user.assigned_class}` : "Class Teacher";
+  if (user.role === "house_manager") return user.assigned_house_name ? `House Manager | ${user.assigned_house_name}` : "House Manager";
+  return user.role;
 }

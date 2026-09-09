@@ -38,7 +38,13 @@ class FaceRecognizer:
     Reload from DB on start and whenever students are re-enrolled.
     """
 
-    def __init__(self, confidence_threshold: float = 0.6):
+    # Minimum distance gap between the best match and the closest *different*
+    # person's vector. Without this, someone who merely resembles an enrolled
+    # person can win the nearest-neighbour race. Mirrors the rival_margin
+    # logic in recognize_face.py.
+    RIVAL_MARGIN_MIN = 0.08
+
+    def __init__(self, confidence_threshold: float = 0.65):
         self.threshold = confidence_threshold
         self.known_encodings: list = []  # list of np arrays
         self.known_student_ids: list = []
@@ -91,11 +97,27 @@ class FaceRecognizer:
 
             distances = face_recognition.face_distance(self.known_encodings, face_enc)
             idx = int(np.argmin(distances))
-            confidence = max(0.0, 1.0 - float(distances[idx]))
-            above = confidence >= self.threshold
+            best_distance = float(distances[idx])
+            best_sid = self.known_student_ids[idx]
 
-            student_id = self.known_student_ids[idx] if above else None
-            house_id   = self.known_house_ids[idx]   if above else None
+            # Find the closest vector belonging to a DIFFERENT student.
+            rival_distance = None
+            for i, d in enumerate(distances):
+                if self.known_student_ids[i] != best_sid:
+                    if rival_distance is None or d < rival_distance:
+                        rival_distance = d
+
+            # Reject if the rival is too close — two people are both plausible.
+            too_ambiguous = (
+                rival_distance is not None
+                and (rival_distance - best_distance) < self.RIVAL_MARGIN_MIN
+            )
+
+            confidence = max(0.0, 1.0 - best_distance)
+            above = confidence >= self.threshold and not too_ambiguous
+
+            student_id = best_sid if above else None
+            house_id   = self.known_house_ids[idx] if above else None
             info = self._info.get(student_id, {}) if student_id else {}
 
             results.append({
@@ -132,11 +154,23 @@ class FaceRecognizer:
 
             idx = int(np.argmin(distances))
             distance = float(distances[idx])
+            sid = self.known_student_ids[idx]
+
+            rival_dist = None
+            for i, d in enumerate(distances):
+                if self.known_student_ids[i] != sid:
+                    if rival_dist is None or d < rival_dist:
+                        rival_dist = d
+
+            too_ambiguous = (
+                rival_dist is not None
+                and (rival_dist - distance) < self.RIVAL_MARGIN_MIN
+            )
             confidence = max(0.0, 1.0 - distance)
 
-            if confidence > best_confidence:
+            if confidence > best_confidence and not too_ambiguous:
                 best_confidence = confidence
-                best_student_id = self.known_student_ids[idx]
+                best_student_id = sid
                 best_house_id = self.known_house_ids[idx]
 
         return best_student_id, best_house_id, best_confidence

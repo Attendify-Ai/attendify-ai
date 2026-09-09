@@ -1,248 +1,145 @@
 "use client";
-import { useEffect, useState } from "react";
-import AppShell from "@/components/layout/AppShell";
-import Card from "@/components/ui/Card";
-import Modal from "@/components/ui/Modal";
-import { getHouses, getHouseHistory, adjustPoints } from "@/lib/api";
-import { isAdmin } from "@/lib/auth";
+import { useCallback, useEffect, useState } from "react";
+import axios from "axios";
+import { motion } from "framer-motion";
+import Logo from "@/components/ui/Logo";
+import { houseColour, hexToRgb } from "@/lib/houseTheme";
+import { API_BASE } from "@/lib/api";
 
-const HOUSE_COLORS = [
-  { card: "bg-amber-500", light: "bg-amber-50 dark:bg-amber-900/20", text: "text-amber-700 dark:text-amber-300", border: "border-amber-300 dark:border-amber-700" },
-  { card: "bg-red-500",   light: "bg-red-50 dark:bg-red-900/20",     text: "text-red-700 dark:text-red-300",     border: "border-red-300 dark:border-red-700" },
-  { card: "bg-blue-500",  light: "bg-blue-50 dark:bg-blue-900/20",   text: "text-blue-700 dark:text-blue-300",   border: "border-blue-300 dark:border-blue-700" },
-  { card: "bg-green-500", light: "bg-green-50 dark:bg-green-900/20", text: "text-green-700 dark:text-green-300", border: "border-green-300 dark:border-green-700" },
-];
-const RANK_LABELS = ["🥇", "🥈", "🥉", "4th"];
-const QUICK_AMOUNTS = [5, 10, 25, 50];
+const REFRESH_MS = 30000;
+const MEDALS = ["🥇", "🥈", "🥉", "4"];
+
+// Deliberately bypasses the shared `api` singleton (which force-redirects to
+// /login on 401): this is a fullscreen kiosk display and should never bounce
+// away from itself. If no session token exists yet on this device, it shows
+// a quiet waiting state instead.
+function kioskClient() {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return axios.create({
+    baseURL: API_BASE,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
 
 export default function LeaderboardPage() {
   const [houses, setHouses] = useState<any[]>([]);
-  const [selectedHouse, setSelectedHouse] = useState<any>(null);
-  const [history, setHistory] = useState<any[]>([]);
-  const [showAdjust, setShowAdjust] = useState(false);
-  const [adjustSign, setAdjustSign] = useState<1 | -1>(1);
-  const [adjustForm, setAdjustForm] = useState({ points: "", reason: "" });
-  const [saving, setSaving] = useState(false);
-  const admin = isAdmin();
+  const [ticker, setTicker] = useState<any[]>([]);
+  // Starts null so the server-rendered markup and the first client render
+  // match exactly (a `new Date()` initial value differs by the ms it takes
+  // to hydrate, which React flags as a hydration mismatch). The real clock
+  // only starts ticking client-side, after mount.
+  const [clock, setClock] = useState<Date | null>(null);
+  const [connected, setConnected] = useState<boolean | null>(null);
 
-  const loadHouses = () => getHouses().then((data) => {
-    setHouses(data);
-    // Keep selected house in sync
-    setSelectedHouse((prev: any) => prev ? data.find((h: any) => h.id === prev.id) || prev : null);
-  }).catch(console.error);
-
-  useEffect(() => { loadHouses(); }, []);
-
-  const openHistory = async (house: any) => {
-    setSelectedHouse(house);
-    const data = await getHouseHistory(house.id);
-    setHistory(data.history || []);
-  };
-
-  const openAdjust = (house: any, sign: 1 | -1) => {
-    setSelectedHouse(house);
-    setAdjustSign(sign);
-    setAdjustForm({ points: "", reason: "" });
-    setShowAdjust(true);
-  };
-
-  const handleAdjust = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedHouse) return;
-    const pts = Math.abs(Number(adjustForm.points)) * adjustSign;
-    if (pts === 0) return;
-    setSaving(true);
+  const load = useCallback(async () => {
     try {
-      await adjustPoints(selectedHouse.id, pts, adjustForm.reason);
-      setShowAdjust(false);
-      await loadHouses();
-      const data = await getHouseHistory(selectedHouse.id);
-      setHistory(data.history || []);
+      const client = kioskClient();
+      const [houseRes, entriesRes] = await Promise.all([
+        client.get("/houses/"),
+        client.get("/late-entries/", { params: { page_size: 15 } }),
+      ]);
+      setHouses(houseRes.data);
+      setTicker(entriesRes.data.items || []);
+      setConnected(true);
     } catch {
-      alert("Failed to adjust points");
-    } finally {
-      setSaving(false);
+      setConnected(false);
     }
-  };
+  }, []);
 
-  const color = (house: any) => HOUSE_COLORS[(houses.indexOf(house)) % HOUSE_COLORS.length];
+  useEffect(() => {
+    load();
+    const dataTimer = setInterval(load, REFRESH_MS);
+    setClock(new Date());
+    const clockTimer = setInterval(() => setClock(new Date()), 1000);
+    return () => { clearInterval(dataTimer); clearInterval(clockTimer); };
+  }, [load]);
+
+  const ranked = [...houses].sort((a, b) => a.rank - b.rank);
+  const tickerLine = ticker.length
+    ? ticker.map((e) => `${e.student_name || "Unidentified"} (${e.house_name}) — ${e.minutes_late}m late`).join("    •    ")
+    : "Waiting for late entries…";
 
   return (
-    <AppShell>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">House Leaderboard</h1>
-        <p className="text-gray-500 dark:text-slate-400 text-sm mt-1">Live standings · click a house to see full history</p>
+    <div className="min-h-screen bg-bg relative overflow-hidden flex flex-col">
+      <div className="ambient-bg">
+        <div className="ambient-blob w-[600px] h-[600px] bg-indigo-700 -top-56 left-1/3 animate-float-slow" />
       </div>
 
-      {/* House cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-        {houses.map((house, idx) => {
-          const c = HOUSE_COLORS[idx % HOUSE_COLORS.length];
-          return (
-            <div key={house.id} className="rounded-2xl overflow-hidden shadow-md border border-gray-100 dark:border-slate-700 bg-white dark:bg-slate-800">
-              {/* Coloured header */}
-              <button
-                onClick={() => openHistory(house)}
-                className={`w-full ${c.card} text-white px-5 pt-5 pb-4 text-left hover:opacity-90 transition-opacity`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="text-2xl">{RANK_LABELS[house.rank - 1]}</div>
-                  <div className="text-right">
-                    <div className="text-3xl font-black leading-none">{house.current_points}</div>
-                    <div className="text-xs opacity-75 mt-0.5">points</div>
-                  </div>
-                </div>
-                <div className="text-lg font-bold mt-3">{house.name}</div>
-                <div className="text-xs opacity-75 mt-0.5">{house.total_late_entries} late entries this year</div>
-              </button>
-
-              {/* Quick point buttons — admin only */}
-              {admin && (
-                <div className="px-4 py-3 flex gap-2">
-                  <button
-                    onClick={() => openAdjust(house, 1)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/40 text-sm font-semibold transition-colors border border-green-200 dark:border-green-800"
-                  >
-                    + Add Points
-                  </button>
-                  <button
-                    onClick={() => openAdjust(house, -1)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 text-sm font-semibold transition-colors border border-red-200 dark:border-red-800"
-                  >
-                    − Deduct
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+      {/* Top bar */}
+      <div className="relative z-10 flex items-center justify-between px-10 py-8">
+        <div className="flex items-center gap-4">
+          <Logo size="lg" />
+          <div>
+            <div className="text-2xl font-bold tracking-tight text-white">Attendify.ai</div>
+            <div className="text-ink-secondary text-sm">House Leaderboard</div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-5xl font-bold tabular-nums tracking-tight text-white">
+            {clock ? clock.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"}
+          </div>
+          <div className="text-ink-secondary text-sm mt-1">
+            {clock ? clock.toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" }) : ""}
+          </div>
+        </div>
       </div>
 
-      {/* Point history panel */}
-      {selectedHouse && (
-        <Card>
-          <div className="px-6 py-4 border-b border-gray-200 dark:border-slate-700 flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-semibold">{selectedHouse.name} — Point History</h2>
-              <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">All point changes including late entry deductions</p>
-            </div>
-            {admin && (
-              <button onClick={() => openAdjust(selectedHouse, 1)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-2 rounded-lg font-medium">
-                Adjust Points
-              </button>
-            )}
-          </div>
-          <div className="divide-y divide-gray-100 dark:divide-slate-700 max-h-96 overflow-y-auto">
-            {history.length === 0 && (
-              <div className="px-6 py-8 text-center text-gray-400 text-sm">No history yet</div>
-            )}
-            {history.map((h: any, i: number) => (
-              <div key={i} className="px-6 py-3 flex items-center justify-between text-sm">
-                <div className="flex-1 min-w-0 pr-4">
-                  <span className="font-medium text-gray-800 dark:text-slate-200">{h.reason}</span>
-                  {h.by && <span className="text-gray-400 ml-2 text-xs">by {h.by}</span>}
-                  <div className="text-xs text-gray-400 mt-0.5">{h.at ? new Date(h.at).toLocaleString() : ""}</div>
-                </div>
-                <div className={`font-bold text-base shrink-0 ${h.points > 0 ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}>
-                  {h.points > 0 ? "+" : ""}{h.points}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+      {/* Connection state */}
+      {connected === false && (
+        <div className="relative z-10 mx-10 mb-4 px-5 py-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-400 text-sm">
+          Not connected — sign in once on this device at <span className="underline">/login</span> to activate the live display.
+        </div>
       )}
 
-      {/* Adjust points modal */}
-      <Modal
-        open={showAdjust}
-        onClose={() => setShowAdjust(false)}
-        title={`${adjustSign === 1 ? "Add Points" : "Deduct Points"} — ${selectedHouse?.name}`}
-      >
-        <form onSubmit={handleAdjust} className="space-y-4">
-          {/* Sign toggle */}
-          <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
-            <button type="button" onClick={() => setAdjustSign(1)}
-              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${adjustSign === 1 ? "bg-green-600 text-white" : "text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700"}`}>
-              + Add Points
-            </button>
-            <button type="button" onClick={() => setAdjustSign(-1)}
-              className={`flex-1 py-2.5 text-sm font-semibold border-l border-gray-200 dark:border-slate-600 transition-colors ${adjustSign === -1 ? "bg-red-600 text-white" : "text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700"}`}>
-              − Deduct Points
-            </button>
-          </div>
+      {/* House cards */}
+      <div className="relative z-10 flex-1 flex items-center justify-center px-10 pb-10">
+        <div className="grid grid-cols-4 gap-6 w-full max-w-7xl items-end">
+          {ranked.map((house) => {
+            const c = houseColour(house);
+            const isFirst = house.rank === 1;
+            return (
+              <motion.div
+                key={house.id}
+                layout
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                className={`relative rounded-3xl glass-hi overflow-hidden ${isFirst ? "py-12 px-8" : "py-8 px-6"}`}
+                style={{
+                  boxShadow: `0 0 0 1px rgba(${hexToRgb(c)},0.35), 0 30px 80px -20px rgba(${hexToRgb(c)},0.5)`,
+                }}
+              >
+                <motion.div
+                  className="absolute inset-0 opacity-25"
+                  style={{ background: `radial-gradient(ellipse at 50% 0%, ${c}, transparent 70%)` }}
+                  animate={{ opacity: [0.15, 0.35, 0.15] }}
+                  transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <div className="relative flex flex-col items-center text-center">
+                  <div className={isFirst ? "text-6xl mb-3" : "text-4xl mb-2"}>{MEDALS[house.rank - 1]}</div>
+                  <div className={`font-bold text-white tracking-tight ${isFirst ? "text-3xl" : "text-xl"}`}>{house.name}</div>
+                  <div
+                    className={`font-extrabold tabular-nums mt-3 ${isFirst ? "text-7xl" : "text-4xl"}`}
+                    style={{ color: c }}
+                  >
+                    {house.current_points}
+                  </div>
+                  <div className="text-ink-secondary text-xs mt-1 uppercase tracking-wider">points</div>
+                  <div className="text-ink-faint text-xs mt-3">{house.total_late_entries ?? 0} late entries</div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      </div>
 
-          {/* Quick amounts */}
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-slate-400 mb-2">Quick amounts</label>
-            <div className="flex gap-2">
-              {QUICK_AMOUNTS.map((amt) => (
-                <button key={amt} type="button"
-                  onClick={() => setAdjustForm((f) => ({ ...f, points: String(amt) }))}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                    adjustForm.points === String(amt)
-                      ? adjustSign === 1 ? "bg-green-600 text-white border-green-600" : "bg-red-600 text-white border-red-600"
-                      : "border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700"
-                  }`}>
-                  {amt}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Custom amount */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">
-              Points <span className="text-gray-400 font-normal">(or enter custom)</span>
-            </label>
-            <input
-              type="number"
-              min="1"
-              value={adjustForm.points}
-              onChange={(e) => setAdjustForm((f) => ({ ...f, points: e.target.value }))}
-              required
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm"
-              placeholder="e.g. 20"
-            />
-          </div>
-
-          {/* Reason / statement */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">
-              Statement / Reason <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              value={adjustForm.reason}
-              onChange={(e) => setAdjustForm((f) => ({ ...f, reason: e.target.value }))}
-              required
-              rows={3}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm resize-none"
-              placeholder="e.g. Won inter-house cricket tournament · Community service award · Disciplinary deduction"
-            />
-            <p className="text-xs text-gray-400 mt-1">This will appear in the point history log.</p>
-          </div>
-
-          {/* Preview */}
-          {adjustForm.points && adjustForm.reason && (
-            <div className={`rounded-lg px-4 py-3 text-sm border ${adjustSign === 1 ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300"}`}>
-              <span className="font-bold">{adjustSign === 1 ? "+" : "−"}{adjustForm.points} pts</span>
-              <span className="mx-2 opacity-50">·</span>
-              <span>{adjustForm.reason}</span>
-            </div>
-          )}
-
-          <div className="flex gap-3 justify-end pt-1">
-            <button type="button" onClick={() => setShowAdjust(false)}
-              className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving || !adjustForm.points || !adjustForm.reason}
-              className={`px-5 py-2 text-white text-sm font-medium rounded-lg disabled:opacity-50 ${adjustSign === 1 ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}>
-              {saving ? "Saving…" : adjustSign === 1 ? `Add ${adjustForm.points || "?"} pts` : `Deduct ${adjustForm.points || "?"} pts`}
-            </button>
-          </div>
-        </form>
-      </Modal>
-    </AppShell>
+      {/* Bottom ticker */}
+      <div className="relative z-10 border-t border-white/8 glass py-3 overflow-hidden">
+        <div className="flex whitespace-nowrap animate-ticker">
+          <span className="px-8 text-sm text-ink-secondary">{tickerLine}</span>
+          <span className="px-8 text-sm text-ink-secondary" aria-hidden>{tickerLine}</span>
+        </div>
+      </div>
+    </div>
   );
 }

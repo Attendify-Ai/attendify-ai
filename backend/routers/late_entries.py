@@ -9,8 +9,9 @@ from pydantic import BaseModel
 from typing import Optional
 from database import get_db
 import models
-from services.auth_service import get_current_user
+from services.auth_service import get_current_user, require_write_access
 from services.point_service import calculate_points_deducted, deduct_points_for_late_entry, restore_points_for_late_entry
+from services.activity_log_service import log_activity
 
 router = APIRouter(prefix="/late-entries", tags=["Late Entries"])
 
@@ -59,6 +60,7 @@ def list_late_entries(
     house_id: Optional[int] = None,
     status: Optional[str] = None,
     student_id: Optional[int] = None,
+    class_: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -75,6 +77,10 @@ def list_late_entries(
         query = query.filter(models.LateEntry.status == status)
     if student_id:
         query = query.filter(models.LateEntry.student_id == student_id)
+    if class_:
+        query = query.join(models.Student, models.LateEntry.student_id == models.Student.id).filter(
+            models.Student.class_ == class_
+        )
 
     total = query.count()
     entries = query.order_by(models.LateEntry.date.desc(), models.LateEntry.arrival_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -119,7 +125,7 @@ class ManualLateEntry(BaseModel):
 def create_manual_entry(
     payload: ManualLateEntry,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_write_access),
 ):
     student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
     if not student:
@@ -172,7 +178,7 @@ def update_late_entry(
     entry_id: int,
     payload: UpdateLateEntry,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_write_access),
 ):
     entry = db.query(models.LateEntry).filter(models.LateEntry.id == entry_id).first()
     if not entry:
@@ -213,20 +219,27 @@ def update_late_entry(
         if payload.status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
 
-        # If changing to unknown, restore points (student unidentified)
-        if payload.status == "unknown" and old_status != "unknown":
-            house = db.query(models.House).filter(models.House.id == entry.house_id).first()
-            if house:
-                house.current_points += entry.points_deducted
-            entry.points_deducted = 0
+        # Points are only ever deducted for confirmed statuses. Compare the
+        # old vs. new status against that set (rather than special-casing
+        # just "unknown") so every transition keeps points_deducted and the
+        # house total in sync — e.g. approving a needs_review entry from the
+        # review queue now actually deducts points, which the old "only
+        # handle unknown" logic missed.
+        POINT_BEARING_STATUSES = {"auto_confirmed", "manually_verified"}
+        was_point_bearing = old_status in POINT_BEARING_STATUSES
+        will_be_point_bearing = payload.status in POINT_BEARING_STATUSES
 
-        # If changing from unknown back to a confirmed status, deduct points again
-        if old_status == "unknown" and payload.status != "unknown":
+        if will_be_point_bearing and not was_point_bearing:
             points = calculate_points_deducted(entry.minutes_late)
             entry.points_deducted = points
             house = db.query(models.House).filter(models.House.id == entry.house_id).first()
             if house:
                 house.current_points -= points
+        elif was_point_bearing and not will_be_point_bearing:
+            house = db.query(models.House).filter(models.House.id == entry.house_id).first()
+            if house:
+                house.current_points += entry.points_deducted
+            entry.points_deducted = 0
 
         entry.status = payload.status
 
@@ -237,6 +250,14 @@ def update_late_entry(
 
     student = db.query(models.Student).filter(models.Student.id == entry.student_id).first() if entry.student_id else None
     house = db.query(models.House).filter(models.House.id == entry.house_id).first() if entry.house_id else None
+
+    if payload.status is not None and payload.status != old_status:
+        student_name = student.name if student else "Unknown student"
+        if payload.status == "manually_verified":
+            log_activity(db, current_user.id, "verified_entry", f"{current_user.name} verified {student_name}'s late entry on {entry.date}")
+        elif payload.status == "unknown":
+            log_activity(db, current_user.id, "marked_wrong_person", f"{current_user.name} marked entry #{entry.id} ({student_name}, {entry.date}) as wrong person")
+
     return entry_to_dict(entry, student, house, current_user)
 
 

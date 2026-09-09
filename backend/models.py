@@ -8,6 +8,7 @@ class House(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     current_points = Column(Integer, default=1000)
+    colour = Column(String)
     created_at = Column(DateTime, default=func.now())
 
 class User(Base):
@@ -17,6 +18,9 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)
+    last_login_at = Column(DateTime)
+    assigned_house_id = Column(Integer, ForeignKey("houses.id"))
+    assigned_class = Column(String)
     created_at = Column(DateTime, default=func.now())
 
 class Student(Base):
@@ -24,7 +28,9 @@ class Student(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     student_code = Column(String, unique=True, nullable=False)
-    class_ = Column("class", String, nullable=False)
+    class_ = Column("class", String, nullable=False)  # denormalized "<standard><section>", e.g. "7B" -- kept in sync for existing consumers (late entries, analytics, reports)
+    standard = Column(Integer)
+    section = Column(String)
     house_id = Column(Integer, ForeignKey("houses.id"))
     face_embeddings = Column(JSONB)
     photo_paths = Column(JSONB)
@@ -63,4 +69,12 @@ class SchoolCalendar(Base):
     label = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
-    
+
+
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    action = Column(String, nullable=False)
+    details = Column(Text)
+    created_at = Column(DateTime, default=func.now())

@@ -1,17 +1,22 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { motion } from "framer-motion";
 import AppShell from "@/components/layout/AppShell";
-import Card from "@/components/ui/Card";
+import GlassCard from "@/components/ui/GlassCard";
 import Badge from "@/components/ui/Badge";
 import Modal from "@/components/ui/Modal";
+import SlideOver from "@/components/ui/SlideOver";
+import Button from "@/components/ui/Button";
+import { Select, TextField } from "@/components/ui/Input";
+import Skeleton from "@/components/ui/Skeleton";
 import { getLateEntries, getReviewQueue, updateLateEntry, createLateEntry, getStudents, getHouses } from "@/lib/api";
 
 export default function LateEntriesPage() {
-  const [tab, setTab] = useState<"all" | "review">("all");
   const [entries, setEntries] = useState<any[]>([]);
-  const [reviewQueue, setReviewQueue] = useState<any[]>([]);
+  const [reviewCount, setReviewCount] = useState(0);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ date_from: "", date_to: "", house_id: "", status: "" });
   const [editEntry, setEditEntry] = useState<any>(null);
   const [editForm, setEditForm] = useState<any>({});
@@ -22,6 +27,7 @@ export default function LateEntriesPage() {
   const [saving, setSaving] = useState(false);
 
   const loadAll = useCallback(async () => {
+    setLoading(true);
     const params: Record<string, string> = { page: String(page), page_size: "25" };
     if (filters.date_from) params.date_from = filters.date_from;
     if (filters.date_to) params.date_to = filters.date_to;
@@ -30,15 +36,11 @@ export default function LateEntriesPage() {
     const d = await getLateEntries(params);
     setEntries(d.items || []);
     setTotal(d.total || 0);
+    setLoading(false);
   }, [page, filters]);
 
-  const loadReview = async () => {
-    const data = await getReviewQueue();
-    setReviewQueue(data);
-  };
-
   useEffect(() => { loadAll(); }, [loadAll]);
-  useEffect(() => { loadReview(); }, []);
+  useEffect(() => { getReviewQueue().then((d) => setReviewCount(d.length)); }, []);
   useEffect(() => {
     getStudents().then(setStudents);
     getHouses().then(setHouses);
@@ -64,7 +66,6 @@ export default function LateEntriesPage() {
       });
       setEditEntry(null);
       loadAll();
-      loadReview();
     } catch {
       alert("Failed to update");
     } finally {
@@ -91,80 +92,46 @@ export default function LateEntriesPage() {
     }
   };
 
-  const displayList = tab === "all" ? entries : reviewQueue;
-
   return (
     <AppShell>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Late Entries</h1>
-          <p className="text-gray-500 dark:text-slate-400 text-sm mt-1">{total} total records</p>
+          <h1 className="text-2xl font-bold text-white">Late Entries</h1>
+          <p className="text-ink-secondary text-sm mt-1">
+            {total} total records{reviewCount > 0 && <span className="text-amber-400"> · {reviewCount} awaiting review</span>}
+          </p>
         </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-2 rounded-lg font-medium"
-        >
-          + Add Manual Entry
-        </button>
+        <Button onClick={() => setShowAdd(true)}>+ Add Manual Entry</Button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-5 bg-gray-100 dark:bg-slate-800 rounded-lg p-1 w-fit">
-        {(["all", "review"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              tab === t ? "bg-white dark:bg-slate-700 shadow text-gray-900 dark:text-white" : "text-gray-500 dark:text-slate-400"
-            }`}
-          >
-            {t === "all" ? "All Entries" : `Review Queue${reviewQueue.length ? ` (${reviewQueue.length})` : ""}`}
-          </button>
-        ))}
-      </div>
+      {/* Filters */}
+      <GlassCard hover={false} className="mb-5 p-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <TextField label="From" type="date" value={filters.date_from}
+            onChange={(e) => { setFilters((f) => ({ ...f, date_from: e.target.value })); setPage(1); }} />
+          <TextField label="To" type="date" value={filters.date_to}
+            onChange={(e) => { setFilters((f) => ({ ...f, date_to: e.target.value })); setPage(1); }} />
+          <Select label="House" value={filters.house_id}
+            onChange={(e) => { setFilters((f) => ({ ...f, house_id: e.target.value })); setPage(1); }}>
+            <option value="">All Houses</option>
+            {houses.map((h: any) => <option key={h.id} value={h.id}>{h.name}</option>)}
+          </Select>
+          <Select label="Status" value={filters.status}
+            onChange={(e) => { setFilters((f) => ({ ...f, status: e.target.value })); setPage(1); }}>
+            <option value="">All</option>
+            <option value="auto_confirmed">Auto Confirmed</option>
+            <option value="needs_review">Needs Review</option>
+            <option value="manually_verified">Manually Verified</option>
+            <option value="unknown">Unknown</option>
+          </Select>
+        </div>
+      </GlassCard>
 
-      {/* Filters (only for All tab) */}
-      {tab === "all" && (
-        <Card className="mb-5 p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div>
-              <label className="text-xs font-medium text-gray-500 dark:text-slate-400 block mb-1">From</label>
-              <input type="date" value={filters.date_from} onChange={(e) => { setFilters((f) => ({ ...f, date_from: e.target.value })); setPage(1); }}
-                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-500 dark:text-slate-400 block mb-1">To</label>
-              <input type="date" value={filters.date_to} onChange={(e) => { setFilters((f) => ({ ...f, date_to: e.target.value })); setPage(1); }}
-                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-500 dark:text-slate-400 block mb-1">House</label>
-              <select value={filters.house_id} onChange={(e) => { setFilters((f) => ({ ...f, house_id: e.target.value })); setPage(1); }}
-                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700">
-                <option value="">All Houses</option>
-                {houses.map((h: any) => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-500 dark:text-slate-400 block mb-1">Status</label>
-              <select value={filters.status} onChange={(e) => { setFilters((f) => ({ ...f, status: e.target.value })); setPage(1); }}
-                className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700">
-                <option value="">All</option>
-                <option value="auto_confirmed">Auto Confirmed</option>
-                <option value="needs_review">Needs Review</option>
-                <option value="manually_verified">Manually Verified</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      <Card>
+      <GlassCard hover={false} className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-700">
+              <tr className="text-left text-ink-secondary border-b border-white/8">
                 <th className="px-5 py-3 font-medium">Date</th>
                 <th className="px-5 py-3 font-medium">Student</th>
                 <th className="px-5 py-3 font-medium">Class</th>
@@ -177,119 +144,102 @@ export default function LateEntriesPage() {
               </tr>
             </thead>
             <tbody>
-              {displayList.length === 0 && (
-                <tr><td colSpan={9} className="px-5 py-8 text-center text-gray-400">No entries found</td></tr>
+              {loading && entries.length === 0 &&
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-b border-white/5"><td colSpan={9} className="px-5 py-3"><Skeleton className="h-5 w-full" /></td></tr>
+                ))}
+              {!loading && entries.length === 0 && (
+                <tr><td colSpan={9} className="px-5 py-10 text-center text-ink-faint">No entries found</td></tr>
               )}
-              {displayList.map((e: any) => (
-                <tr key={e.id} className="border-b border-gray-50 dark:border-slate-700/50 hover:bg-gray-50 dark:hover:bg-slate-700/30">
-                  <td className="px-5 py-3 font-medium">{e.date}</td>
-                  <td className="px-5 py-3">{e.student_name || <span className="text-yellow-600 font-medium">Unidentified</span>}</td>
-                  <td className="px-5 py-3 text-gray-500">{e.student_class || "–"}</td>
-                  <td className="px-5 py-3">{e.house_name || "–"}</td>
-                  <td className="px-5 py-3">{e.arrival_time?.slice(0, 5)}</td>
-                  <td className="px-5 py-3">{e.minutes_late} min</td>
-                  <td className="px-5 py-3 font-semibold text-red-500 dark:text-red-400">
+              {entries.map((e: any, i: number) => (
+                <motion.tr
+                  key={e.id}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: Math.min(i * 0.02, 0.3) }}
+                  className={`border-b border-white/5 hover:bg-white/[0.03] transition-colors ${i % 2 === 1 ? "bg-white/[0.015]" : ""}`}
+                >
+                  <td className="px-5 py-3 font-medium text-white">{e.date}</td>
+                  <td className="px-5 py-3 text-white">{e.student_name || <span className="text-amber-400 font-medium">Unidentified</span>}</td>
+                  <td className="px-5 py-3 text-ink-secondary">{e.student_class || "–"}</td>
+                  <td className="px-5 py-3 text-ink-secondary">{e.house_name || "–"}</td>
+                  <td className="px-5 py-3 text-ink-secondary">{e.arrival_time?.slice(0, 5)}</td>
+                  <td className="px-5 py-3 text-ink-secondary">{e.minutes_late} min</td>
+                  <td className="px-5 py-3 font-semibold text-red-400">
                     {e.status === "unknown" ? "0" : `-${e.points_deducted}`}
                   </td>
                   <td className="px-5 py-3"><Badge label={e.status} /></td>
                   <td className="px-5 py-3">
-                    <button onClick={() => openEdit(e)} className="text-indigo-600 hover:underline text-xs">Edit</button>
+                    <button onClick={() => openEdit(e)} className="text-indigo-400 hover:text-indigo-300 text-xs font-medium">Edit</button>
                   </td>
-                </tr>
+                </motion.tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        {tab === "all" && total > 25 && (
-          <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-700 flex items-center gap-3 text-sm">
-            <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}
-              className="px-3 py-1 rounded border border-gray-300 dark:border-slate-600 disabled:opacity-40">Prev</button>
-            <span className="text-gray-500">Page {page} of {Math.ceil(total / 25)}</span>
-            <button disabled={page * 25 >= total} onClick={() => setPage((p) => p + 1)}
-              className="px-3 py-1 rounded border border-gray-300 dark:border-slate-600 disabled:opacity-40">Next</button>
+        {total > 25 && (
+          <div className="px-5 py-3 border-t border-white/8 flex items-center gap-3 text-sm">
+            <Button variant="secondary" className="px-3 py-1.5 text-xs" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
+            <span className="text-ink-secondary">Page {page} of {Math.ceil(total / 25)}</span>
+            <Button variant="secondary" className="px-3 py-1.5 text-xs" disabled={page * 25 >= total} onClick={() => setPage((p) => p + 1)}>Next</Button>
           </div>
         )}
-      </Card>
+      </GlassCard>
 
-      {/* Edit Modal */}
-      <Modal open={!!editEntry} onClose={() => setEditEntry(null)} title="Edit Late Entry">
+      {/* Edit slide-out panel */}
+      <SlideOver open={!!editEntry} onClose={() => setEditEntry(null)} title="Edit Late Entry" subtitle={editEntry ? `${editEntry.date} · ${editEntry.arrival_time?.slice(0, 5)}` : undefined}>
         {editEntry && (
-          <div className="space-y-4">
-            <div className="bg-gray-50 dark:bg-slate-700 rounded-lg p-3 text-sm">
-              <div><span className="font-medium">Original: </span>{editEntry.date} — {editEntry.arrival_time?.slice(0, 5)}</div>
-              <div><span className="font-medium">Student: </span>{editEntry.student_name || "Unidentified"}</div>
+          <div className="space-y-5">
+            <div className="glass rounded-xl p-4 text-sm">
+              <div className="text-ink-secondary text-xs uppercase tracking-wide mb-1">Original</div>
+              <div className="text-white font-medium">{editEntry.student_name || "Unidentified"}</div>
+              <div className="text-ink-secondary text-xs mt-0.5">{editEntry.house_name} · {editEntry.date} at {editEntry.arrival_time?.slice(0, 5)}</div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Assign Student</label>
-              <select value={editForm.student_id} onChange={(e) => setEditForm((f: any) => ({ ...f, student_id: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm">
-                <option value="">— Unidentified —</option>
-                {students.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.student_code})</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Arrival Time</label>
-              <input type="time" value={editForm.arrival_time} onChange={(e) => setEditForm((f: any) => ({ ...f, arrival_time: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Status</label>
-              <select value={editForm.status} onChange={(e) => setEditForm((f: any) => ({ ...f, status: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm">
-                <option value="auto_confirmed">Auto Confirmed</option>
-                <option value="needs_review">Needs Review</option>
-                <option value="manually_verified">Manually Verified</option>
-                <option value="unknown">Unknown (no points deducted)</option>
-              </select>
-            </div>
+
+            <Select label="Assign Student" value={editForm.student_id} onChange={(e) => setEditForm((f: any) => ({ ...f, student_id: e.target.value }))}>
+              <option value="">— Unidentified —</option>
+              {students.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.student_code})</option>)}
+            </Select>
+
+            <TextField label="Arrival Time" type="time" value={editForm.arrival_time}
+              onChange={(e) => setEditForm((f: any) => ({ ...f, arrival_time: e.target.value }))} />
+
+            <Select label="Status" value={editForm.status} onChange={(e) => setEditForm((f: any) => ({ ...f, status: e.target.value }))}>
+              <option value="auto_confirmed">Auto Confirmed</option>
+              <option value="needs_review">Needs Review</option>
+              <option value="manually_verified">Manually Verified</option>
+              <option value="unknown">Unknown (no points deducted)</option>
+            </Select>
+
             {editEntry.captured_image && (
               <div>
-                <label className="block text-sm font-medium mb-1.5">Captured Image</label>
+                <label className="block text-xs font-medium text-ink-secondary mb-1.5">Captured Image</label>
                 <img src={`http://localhost:8000/uploads/captures/${editEntry.captured_image.split("/").pop()}`}
-                  alt="Capture" className="w-40 h-40 object-cover rounded-lg border border-gray-200 dark:border-slate-600" />
+                  alt="Capture" className="w-40 h-40 object-cover rounded-xl border border-white/10" />
               </div>
             )}
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setEditEntry(null)} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
-                Cancel
-              </button>
-              <button onClick={handleEditSave} disabled={saving} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-60">
-                {saving ? "Saving…" : "Save Changes"}
-              </button>
+
+            <div className="flex gap-3 justify-end pt-2">
+              <Button variant="ghost" onClick={() => setEditEntry(null)}>Cancel</Button>
+              <Button onClick={handleEditSave} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
             </div>
           </div>
         )}
-      </Modal>
+      </SlideOver>
 
       {/* Add Manual Entry Modal */}
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add Manual Late Entry">
         <form onSubmit={handleAdd} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Student</label>
-            <select value={addForm.student_id} onChange={(e) => setAddForm((f) => ({ ...f, student_id: e.target.value }))} required
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm">
-              <option value="">Select student…</option>
-              {students.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.student_code})</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Date</label>
-            <input type="date" value={addForm.date} onChange={(e) => setAddForm((f) => ({ ...f, date: e.target.value }))} required
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Arrival Time</label>
-            <input type="time" value={addForm.arrival_time} onChange={(e) => setAddForm((f) => ({ ...f, arrival_time: e.target.value }))} required
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm" />
-          </div>
-          <div className="flex gap-3 justify-end">
-            <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-60">
-              {saving ? "Adding…" : "Add Entry"}
-            </button>
+          <Select label="Student" value={addForm.student_id} onChange={(e) => setAddForm((f) => ({ ...f, student_id: e.target.value }))} required>
+            <option value="">Select student…</option>
+            {students.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.student_code})</option>)}
+          </Select>
+          <TextField label="Date" type="date" value={addForm.date} onChange={(e) => setAddForm((f) => ({ ...f, date: e.target.value }))} required />
+          <TextField label="Arrival Time" type="time" value={addForm.arrival_time} onChange={(e) => setAddForm((f) => ({ ...f, arrival_time: e.target.value }))} required />
+          <div className="flex gap-3 justify-end pt-1">
+            <Button type="button" variant="ghost" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Adding…" : "Add Entry"}</Button>
           </div>
         </form>
       </Modal>

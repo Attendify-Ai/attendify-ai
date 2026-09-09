@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-import bcrypt
+import hashlib
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -16,11 +16,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+    return hashlib.sha256(plain.encode()).hexdigest() == hashed
 
 
 def create_access_token(data: dict) -> str:
@@ -53,4 +53,18 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 def require_admin(current_user: models.User = Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+def require_role(*roles: str):
+    def dependency(current_user: models.User = Depends(get_current_user)):
+        if current_user.role not in roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return current_user
+    return dependency
+
+
+def require_write_access(current_user: models.User = Depends(get_current_user)):
+    if current_user.role == "house_manager":
+        raise HTTPException(status_code=403, detail="House managers have read-only access")
     return current_user

@@ -4,10 +4,9 @@ import AppShell from "@/components/layout/AppShell";
 import Card from "@/components/ui/Card";
 import { getLateTrend, getHousePerformance, getFrequentOffenders, getExportUrl } from "@/lib/api";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-
-const HOUSE_COLORS = ["#6366f1", "#f43f5e", "#0ea5e9", "#10b981"];
+import { houseColour } from "@/lib/houseTheme";
 
 export default function AnalyticsPage() {
   const [trend, setTrend] = useState<any[]>([]);
@@ -92,8 +91,8 @@ export default function AnalyticsPage() {
                   <YAxis tick={{ fontSize: 11 }} />
                   <Tooltip contentStyle={{ background: "#1e293b", border: "none", borderRadius: "8px", fontSize: "12px" }} />
                   <Bar dataKey="current_points" name="Points Remaining" radius={[4, 4, 0, 0]}>
-                    {performance.map((_, i) => (
-                      <rect key={i} fill={HOUSE_COLORS[i % HOUSE_COLORS.length]} />
+                    {performance.map((house: any, i: number) => (
+                      <Cell key={i} fill={houseColour(house)} />
                     ))}
                   </Bar>
                 </BarChart>

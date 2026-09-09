@@ -6,6 +6,7 @@ from database import get_db
 import models
 from services.auth_service import get_current_user, require_admin
 from services.point_service import apply_point_adjustment
+from services.activity_log_service import log_activity
 
 router = APIRouter(prefix="/houses", tags=["Houses"])
 
@@ -15,6 +16,7 @@ def house_to_dict(house, rank=None, late_count=None):
         "id": house.id,
         "name": house.name,
         "current_points": house.current_points,
+        "colour": house.colour,
         "rank": rank,
         "total_late_entries": late_count,
         "created_at": house.created_at,
@@ -81,6 +83,10 @@ def adjust_points(
 
     adjustment = apply_point_adjustment(db, house_id, payload.points, payload.reason, current_user.id)
     db.refresh(house)
+
+    sign = "+" if payload.points > 0 else ""
+    log_activity(db, current_user.id, "adjusted_points", f"{sign}{payload.points} pts to {house.name} — {payload.reason}")
+
     return {
         "adjustment_id": adjustment.id,
         "house_id": house_id,

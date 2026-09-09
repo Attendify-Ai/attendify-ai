@@ -1,79 +1,166 @@
 "use client";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import AppShell from "@/components/layout/AppShell";
 import Card from "@/components/ui/Card";
 import Modal from "@/components/ui/Modal";
-import { getStudents, getHouses, createStudent, updateStudent, deleteStudent, addStudentPhotos } from "@/lib/api";
-import { isAdmin } from "@/lib/auth";
+import Button from "@/components/ui/Button";
+import { getStudentsByClass, getHouses, createStudent, updateStudent, deleteStudent, addStudentPhotos } from "@/lib/api";
+import { getStoredUser, isAdmin } from "@/lib/auth";
 import api from "@/lib/api";
+import { houseColour, hexToRgb } from "@/lib/houseTheme";
+import { STANDARDS, sectionsForStandard, parseClassString } from "@/lib/classStructure";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  enrolled: { label: "Enrolled", color: "text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20" },
-  photos_ready: { label: "Ready to enroll", color: "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20" },
-  insufficient_photos: { label: "Need more photos", color: "text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20" },
-  no_photos: { label: "No photos", color: "text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800" },
+  enrolled: { label: "Enrolled", color: "text-green-400 bg-green-500/10 border-green-500/25" },
+  photos_ready: { label: "Ready to enroll", color: "text-blue-400 bg-blue-500/10 border-blue-500/25" },
+  insufficient_photos: { label: "Need more photos", color: "text-yellow-400 bg-yellow-500/10 border-yellow-500/25" },
+  no_photos: { label: "No photos", color: "text-ink-secondary bg-white/5 border-white/10" },
 };
 
+type ClassTree = Record<string, Record<string, any[]>>;
+
+function emptyTree(): ClassTree {
+  const tree: ClassTree = {};
+  for (const std of STANDARDS) {
+    tree[String(std)] = {};
+    for (const sec of sectionsForStandard(std)) tree[String(std)][sec] = [];
+  }
+  return tree;
+}
+
+function HouseBadge({ name }: { name?: string }) {
+  if (!name) return <span className="text-ink-faint text-xs">—</span>;
+  const colour = houseColour({ name });
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
+      style={{
+        background: `rgba(${hexToRgb(colour)}, 0.14)`,
+        borderColor: `rgba(${hexToRgb(colour)}, 0.35)`,
+        color: colour,
+      }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: colour }} />
+      {name}
+    </span>
+  );
+}
+
 export default function StudentsPage() {
-  const [students, setStudents] = useState<any[]>([]);
+  const user = getStoredUser();
+  const admin = isAdmin();
+  const isTeacher = user?.role === "teacher";
+
+  const [tree, setTree] = useState<ClassTree>(emptyTree());
   const [houses, setHouses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [houseFilter, setHouseFilter] = useState("");
+
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [selectedStd, setSelectedStd] = useState<number | null>(null);
+  const [selectedSection, setSelectedSection] = useState<string | null>(null);
+
   const [showAdd, setShowAdd] = useState(false);
   const [editStudent, setEditStudent] = useState<any>(null);
   const [enrollStudent, setEnrollStudent] = useState<any>(null);
-  const [form, setForm] = useState({ name: "", student_code: "", class_: "", house_id: "" });
+  const [form, setForm] = useState({ name: "", student_code: "", standard: "", section: "", house_id: "" });
   const [saving, setSaving] = useState(false);
-  const admin = isAdmin();
 
-  const loadStudents = useCallback(async () => {
-    const params: Record<string, string> = {};
-    if (search) params.search = search;
-    if (houseFilter) params.house_id = houseFilter;
-    const data = await getStudents(params);
-    setStudents(data);
-  }, [search, houseFilter]);
+  const loadTree = useCallback(async () => {
+    const data = await getStudentsByClass();
+    setTree(data);
+    setLoading(false);
+  }, []);
 
-  useEffect(() => { loadStudents(); }, [loadStudents]);
+  useEffect(() => { loadTree(); }, [loadTree]);
   useEffect(() => { getHouses().then(setHouses); }, []);
 
+  // Class teachers are hard-scoped to their own class — no sidebar, no navigation.
+  const teacherClass = isTeacher ? parseClassString(user?.assigned_class) : null;
+  useEffect(() => {
+    if (teacherClass) {
+      setSelectedStd(teacherClass.standard);
+      setSelectedSection(teacherClass.section);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.assigned_class]);
+
+  const toggleClass = (std: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(std) ? next.delete(std) : next.add(std);
+      return next;
+    });
+  };
+
+  const selectSection = (std: number, section: string) => {
+    setSelectedStd(std);
+    setSelectedSection(section);
+    setExpanded((prev) => new Set(prev).add(std));
+  };
+
+  const currentList: any[] = useMemo(() => {
+    if (selectedStd == null || !selectedSection) return [];
+    return tree[String(selectedStd)]?.[selectedSection] ?? [];
+  }, [tree, selectedStd, selectedSection]);
+
+  const filteredList = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return currentList;
+    return currentList.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.student_code.toLowerCase().includes(q)
+    );
+  }, [currentList, search]);
+
+  const classTotal = (std: number) =>
+    Object.values(tree[String(std)] || {}).reduce((sum: number, list: any) => sum + list.length, 0);
+
   const openAdd = () => {
-    setForm({ name: "", student_code: "", class_: "", house_id: "" });
+    setForm({
+      name: "",
+      student_code: "",
+      standard: selectedStd ? String(selectedStd) : "",
+      section: selectedSection || "",
+      house_id: "",
+    });
     setShowAdd(true);
   };
 
   const openEdit = (s: any) => {
-    setForm({ name: s.name, student_code: s.student_code, class_: s.class, house_id: String(s.house_id) });
+    const fallback = parseClassString(s.class);
+    setForm({
+      name: s.name,
+      student_code: s.student_code,
+      standard: String(s.standard ?? fallback?.standard ?? ""),
+      section: s.section ?? fallback?.section ?? "",
+      house_id: String(s.house_id ?? ""),
+    });
     setEditStudent(s);
   };
 
-  const triggerEnrollment = async () => {
-    try {
-      await fetch("http://localhost:8001/enroll", { method: "POST" });
-    } catch {
-      // recognition server offline — enrollment will happen next time it starts
-    }
+  const closeModal = () => {
+    setShowAdd(false);
+    setEditStudent(null);
   };
 
-  const handleFormSubmit = async (e: React.FormEvent, photos: File[]) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
       const fd = new FormData();
       fd.append("name", form.name);
       fd.append("student_code", form.student_code);
-      fd.append("class_", form.class_);
+      fd.append("standard", form.standard);
+      fd.append("section", form.section);
       fd.append("house_id", form.house_id);
-      photos.forEach((f) => fd.append("photos", f));
       if (editStudent) {
         await updateStudent(editStudent.id, fd);
-        setEditStudent(null);
       } else {
         await createStudent(fd);
-        setShowAdd(false);
       }
-      if (photos.length >= 3) triggerEnrollment();
-      loadStudents();
+      closeModal();
+      loadTree();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Error saving student");
     } finally {
@@ -84,365 +171,268 @@ export default function StudentsPage() {
   const handleDelete = async (s: any) => {
     if (!confirm(`Delete ${s.name}? This cannot be undone.`)) return;
     await deleteStudent(s.id);
-    loadStudents();
+    loadTree();
   };
 
-  const enrolledCount = students.filter((s) => s.enrollment_status === "enrolled").length;
-  const pendingCount = students.filter((s) => s.enrollment_status === "photos_ready").length;
+  const formValid = form.name && form.student_code && form.standard && form.section && form.house_id;
 
   return (
     <AppShell>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Students</h1>
-          <p className="text-gray-500 dark:text-slate-400 text-sm mt-1">
-            {students.length} students · {enrolledCount} face-enrolled · {pendingCount} pending enrollment
+          <h1 className="text-2xl font-bold text-white">Students</h1>
+          <p className="text-ink-secondary text-sm mt-1">
+            {isTeacher
+              ? teacherClass
+                ? `Class ${teacherClass.standard} · Section ${teacherClass.section}`
+                : "No class assigned"
+              : "Browse by class and section"}
           </p>
         </div>
-        {admin && (
-          <button onClick={openAdd} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-2 rounded-lg font-medium">
-            + Add Student
-          </button>
+        {admin && (selectedStd != null || !isTeacher) && (
+          <Button onClick={openAdd} disabled={selectedStd == null}>+ Add Student</Button>
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-3 mb-5">
-        <input type="text" placeholder="Search by name or code…" value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 px-3.5 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700" />
-        <select value={houseFilter} onChange={(e) => setHouseFilter(e.target.value)}
-          className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700">
-          <option value="">All Houses</option>
-          {houses.map((h: any) => <option key={h.id} value={h.id}>{h.name}</option>)}
-        </select>
-      </div>
-
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500 dark:text-slate-400 border-b border-gray-100 dark:border-slate-700">
-                <th className="px-5 py-3 font-medium">Name</th>
-                <th className="px-5 py-3 font-medium">Code</th>
-                <th className="px-5 py-3 font-medium">Class</th>
-                <th className="px-5 py-3 font-medium">House</th>
-                <th className="px-5 py-3 font-medium">Face Enrollment</th>
-                {admin && <th className="px-5 py-3 font-medium">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {students.length === 0 && (
-                <tr><td colSpan={6} className="px-5 py-8 text-center text-gray-400">No students found</td></tr>
-              )}
-              {students.map((s: any) => {
-                const status = STATUS_LABELS[s.enrollment_status] || STATUS_LABELS.no_photos;
+      <div className={`grid gap-6 ${isTeacher ? "" : "grid-cols-1 lg:grid-cols-[280px_1fr]"}`}>
+        {!isTeacher && (
+          <Card className="h-fit lg:sticky lg:top-24">
+            <div className="px-4 py-3 border-b border-white/8">
+              <h2 className="text-sm font-semibold text-white">Classes</h2>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto py-2">
+              {STANDARDS.map((std) => {
+                const isOpen = expanded.has(std);
+                const total = classTotal(std);
                 return (
-                  <tr key={s.id} className="border-b border-gray-50 dark:border-slate-700/50 hover:bg-gray-50 dark:hover:bg-slate-700/30">
-                    <td className="px-5 py-3 font-medium">{s.name}</td>
-                    <td className="px-5 py-3 text-gray-500 font-mono text-xs">{s.student_code}</td>
-                    <td className="px-5 py-3">{s.class}</td>
-                    <td className="px-5 py-3">{s.house_name}</td>
-                    <td className="px-5 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.color}`}>
-                        {s.enrollment_status === "enrolled" && "✓ "}
-                        {status.label}
-                        {s.photo_count > 0 && <span className="opacity-60">({s.photo_count} photos)</span>}
+                  <div key={std}>
+                    <button
+                      onClick={() => toggleClass(std)}
+                      className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
+                        selectedStd === std ? "text-white" : "text-ink-secondary hover:text-white"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`transition-transform duration-200 text-xs ${isOpen ? "rotate-90" : ""}`}>▸</span>
+                        Class {std}
                       </span>
-                    </td>
-                    {admin && (
-                      <td className="px-5 py-3">
-                        <div className="flex gap-3">
-                          <button onClick={() => openEdit(s)} className="text-indigo-600 hover:underline text-xs">Edit</button>
-                          <button onClick={() => setEnrollStudent(s)} className="text-blue-600 hover:underline text-xs font-medium">
-                            {s.enrollment_status === "enrolled" ? "Manage Photos" : "Enroll Face"}
-                          </button>
-                          <button onClick={() => handleDelete(s)} className="text-red-500 hover:underline text-xs">Delete</button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
+                      <span className="text-xs text-ink-faint">{total}</span>
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {isOpen && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                          className="overflow-hidden"
+                        >
+                          {sectionsForStandard(std).map((sec) => {
+                            const count = tree[String(std)]?.[sec]?.length ?? 0;
+                            const active = selectedStd === std && selectedSection === sec;
+                            return (
+                              <button
+                                key={sec}
+                                onClick={() => selectSection(std, sec)}
+                                className={`w-full flex items-center justify-between pl-9 pr-4 py-1.5 text-xs transition-colors ${
+                                  active
+                                    ? "bg-white/10 text-white font-medium border-l-2 border-cyan-400"
+                                    : "text-ink-secondary hover:text-white hover:bg-white/5 border-l-2 border-transparent"
+                                }`}
+                              >
+                                <span>Section {sec}</span>
+                                <span className="text-ink-faint">{count}</span>
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          </Card>
+        )}
+
+        <div>
+          {selectedStd == null || !selectedSection ? (
+            <Card className="py-16 text-center">
+              <p className="text-ink-secondary text-sm">
+                {isTeacher ? "Contact your administrator to get a class assigned." : "Select a class and section from the left to view students."}
+              </p>
+            </Card>
+          ) : (
+            <Card>
+              <div className="px-5 py-4 border-b border-white/8 flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="text-base font-semibold text-white">
+                    Class {selectedStd} · Section {selectedSection}
+                  </h2>
+                  <p className="text-xs text-ink-faint mt-0.5">{currentList.length} student{currentList.length !== 1 ? "s" : ""}</p>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search by name or ID…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="px-3.5 py-2 text-sm rounded-lg bg-white/[0.03] border border-white/10 focus:border-white/30 outline-none text-white placeholder-ink-faint w-full sm:w-64"
+                />
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-ink-secondary border-b border-white/8">
+                      <th className="px-5 py-3 font-medium">Name</th>
+                      <th className="px-5 py-3 font-medium">Student ID</th>
+                      <th className="px-5 py-3 font-medium">House</th>
+                      <th className="px-5 py-3 font-medium">Face Enrollment</th>
+                      {admin && <th className="px-5 py-3 font-medium">Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading && (
+                      <tr><td colSpan={5} className="px-5 py-8 text-center text-ink-faint">Loading…</td></tr>
+                    )}
+                    {!loading && filteredList.length === 0 && (
+                      <tr><td colSpan={5} className="px-5 py-8 text-center text-ink-faint">No students found</td></tr>
+                    )}
+                    {filteredList.map((s: any) => {
+                      const status = STATUS_LABELS[s.enrollment_status] || STATUS_LABELS.no_photos;
+                      return (
+                        <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-5 py-3 font-medium text-white">{s.name}</td>
+                          <td className="px-5 py-3 text-ink-secondary font-mono text-xs">{s.student_code}</td>
+                          <td className="px-5 py-3"><HouseBadge name={s.house_name} /></td>
+                          <td className="px-5 py-3">
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${status.color}`}>
+                              {s.enrollment_status === "enrolled" && "✓ "}
+                              {status.label}
+                            </span>
+                          </td>
+                          {admin && (
+                            <td className="px-5 py-3">
+                              <div className="flex gap-3">
+                                <button onClick={() => openEdit(s)} className="text-cyan-400 hover:underline text-xs">Edit</button>
+                                <button onClick={() => setEnrollStudent(s)} className="text-blue-400 hover:underline text-xs font-medium">
+                                  {s.enrollment_status === "enrolled" ? "Manage Photos" : "Enroll Face"}
+                                </button>
+                                <button onClick={() => handleDelete(s)} className="text-red-400 hover:underline text-xs">Delete</button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
         </div>
-      </Card>
+      </div>
 
       {/* Add / Edit Modal */}
-      <Modal open={showAdd || !!editStudent} onClose={() => { setShowAdd(false); setEditStudent(null); }}
-        title={editStudent ? "Edit Student" : "Add Student"}>
-        <StudentFormModal
-          form={form}
-          setForm={setForm}
-          onSubmit={handleFormSubmit}
-          onClose={() => { setShowAdd(false); setEditStudent(null); }}
-          isEdit={!!editStudent}
-          saving={saving}
-        />
+      <Modal open={showAdd || !!editStudent} onClose={closeModal} title={editStudent ? "Edit Student" : "Add Student"}>
+        <form onSubmit={handleFormSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-ink-secondary mb-1.5">Full Name</label>
+            <input
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 focus:border-white/40 text-sm text-white outline-none transition-colors"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-secondary mb-1.5">Student ID</label>
+            <input
+              value={form.student_code}
+              onChange={(e) => setForm((f) => ({ ...f, student_code: e.target.value }))}
+              required
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 focus:border-white/40 text-sm text-white outline-none transition-colors"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-ink-secondary mb-1.5">Standard</label>
+              <select
+                value={form.standard}
+                onChange={(e) => {
+                  const std = e.target.value;
+                  const valid = sectionsForStandard(Number(std));
+                  setForm((f) => ({ ...f, standard: std, section: valid.includes(f.section) ? f.section : valid[0] }));
+                }}
+                required
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 focus:border-white/40 text-sm text-white outline-none transition-colors"
+              >
+                <option value="" className="bg-surface">Select…</option>
+                {STANDARDS.map((std) => (
+                  <option key={std} value={std} className="bg-surface">Class {std}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-ink-secondary mb-1.5">Section</label>
+              <select
+                value={form.section}
+                onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))}
+                required
+                disabled={!form.standard}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 focus:border-white/40 text-sm text-white outline-none transition-colors disabled:opacity-40"
+              >
+                <option value="" className="bg-surface">Select…</option>
+                {(form.standard ? sectionsForStandard(Number(form.standard)) : []).map((sec) => (
+                  <option key={sec} value={sec} className="bg-surface">Section {sec}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-ink-secondary mb-1.5">House</label>
+            <div className="flex flex-wrap gap-2">
+              {houses.map((h: any) => {
+                const colour = houseColour(h);
+                const active = String(form.house_id) === String(h.id);
+                return (
+                  <button
+                    key={h.id}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, house_id: String(h.id) }))}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors"
+                    style={
+                      active
+                        ? { background: `rgba(${hexToRgb(colour)}, 0.18)`, borderColor: colour, color: colour }
+                        : { background: "transparent", borderColor: "rgba(255,255,255,0.1)", color: "var(--foreground)" }
+                    }
+                  >
+                    <span className="w-2 h-2 rounded-full" style={{ background: colour }} />
+                    {h.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex gap-3 justify-end pt-1">
+            <button type="button" onClick={closeModal} className="px-4 py-2 text-sm text-ink-secondary hover:text-white hover:bg-white/5 rounded-lg">
+              Cancel
+            </button>
+            <Button type="submit" disabled={saving || !formValid}>
+              {saving ? "Saving…" : editStudent ? "Save Changes" : "Add Student"}
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* Face Enrollment Modal */}
       {enrollStudent && (
         <FaceEnrollModal
           student={enrollStudent}
-          onClose={() => { setEnrollStudent(null); loadStudents(); }}
+          onClose={() => { setEnrollStudent(null); loadTree(); }}
         />
       )}
     </AppShell>
-  );
-}
-
-function StudentFormModal({ form, setForm, onSubmit, onClose, isEdit, saving }: any) {
-  const [houses, setHouses] = useState<any[]>([]);
-  const [photos, setPhotos] = useState<File[]>([]);
-  const [photoMode, setPhotoMode] = useState<"camera" | "upload">("camera");
-  const [previews, setPreviews] = useState<string[]>([]);
-
-  // Camera refs/state
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState("");
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { getHouses().then(setHouses); }, []);
-
-  // Stop camera when unmounted or switching away
-  const stopCamera = () => {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    setCameraActive(false);
-  };
-
-  useEffect(() => () => stopCamera(), []);
-
-  const startCamera = async () => {
-    setCameraError("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch (err: any) {
-      setCameraError(
-        err.name === "NotAllowedError" ? "Camera access denied." :
-        err.name === "NotFoundError" ? "No camera found." :
-        `Camera error: ${err.message}`
-      );
-    }
-  };
-
-  const switchMode = (m: "camera" | "upload") => {
-    if (m !== "camera") stopCamera();
-    setPhotoMode(m);
-  };
-
-  const captureFrame = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")!.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const file = new File([blob], `capture_${Date.now()}.jpg`, { type: "image/jpeg" });
-      setPhotos((prev) => [...prev, file]);
-      setPreviews((prev) => [...prev, dataUrl]);
-    }, "image/jpeg", 0.92);
-  };
-
-  const handleFileSelect = (files: FileList | null) => {
-    if (!files) return;
-    const arr = Array.from(files);
-    setPhotos((prev) => [...prev, ...arr]);
-    setPreviews((prev) => [...prev, ...arr.map((f) => URL.createObjectURL(f))]);
-  };
-
-  const removePhoto = (i: number) => {
-    setPhotos((prev) => prev.filter((_, idx) => idx !== i));
-    setPreviews((prev) => prev.filter((_, idx) => idx !== i));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    stopCamera();
-    onSubmit(e, photos);
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Profile fields */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-2">
-          <label className="block text-sm font-medium mb-1.5">Full Name</label>
-          <input value={form.name} onChange={(e) => setForm((f: any) => ({ ...f, name: e.target.value }))} required
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1.5">Student Code / ID</label>
-          <input value={form.student_code} onChange={(e) => setForm((f: any) => ({ ...f, student_code: e.target.value }))} required
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1.5">Class</label>
-          <input value={form.class_} onChange={(e) => setForm((f: any) => ({ ...f, class_: e.target.value }))} required
-            placeholder="e.g. 9A"
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm" />
-        </div>
-        <div className="col-span-2">
-          <label className="block text-sm font-medium mb-1.5">House</label>
-          <select value={form.house_id} onChange={(e) => setForm((f: any) => ({ ...f, house_id: e.target.value }))} required
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm">
-            <option value="">Select house…</option>
-            {houses.map((h: any) => <option key={h.id} value={h.id}>{h.name}</option>)}
-          </select>
-        </div>
-      </div>
-
-      {/* Face Photos section — only on Add, not Edit */}
-      {!isEdit && (
-        <div className="border border-gray-200 dark:border-slate-600 rounded-xl overflow-hidden">
-          {/* Section header */}
-          <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-slate-700/50 border-b border-gray-200 dark:border-slate-600">
-            <div>
-              <span className="text-sm font-medium text-gray-700 dark:text-slate-200">Face Photos</span>
-              <span className="ml-2 text-xs text-gray-400 dark:text-slate-500">optional — 3–5 for best accuracy</span>
-            </div>
-            {/* Mode tabs */}
-            <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden text-xs">
-              <button type="button" onClick={() => switchMode("camera")}
-                className={`px-3 py-1.5 font-medium transition-colors ${photoMode === "camera" ? "bg-indigo-600 text-white" : "text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-600"}`}>
-                📷 Camera
-              </button>
-              <button type="button" onClick={() => switchMode("upload")}
-                className={`px-3 py-1.5 font-medium border-l border-gray-200 dark:border-slate-600 transition-colors ${photoMode === "upload" ? "bg-indigo-600 text-white" : "text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-600"}`}>
-                📤 Upload
-              </button>
-            </div>
-          </div>
-
-          <div className="p-4 space-y-3">
-            {/* CAMERA mode */}
-            {photoMode === "camera" && (
-              <div className="space-y-2">
-                {/* Compact video preview */}
-                <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: "4/3", maxHeight: "200px" }}>
-                  <video ref={videoRef} autoPlay playsInline muted
-                    className={`w-full h-full object-cover ${cameraActive ? "block" : "hidden"}`} />
-                  <canvas ref={canvasRef} className="hidden" />
-                  {!cameraActive && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                      {cameraError
-                        ? <p className="text-xs text-red-400 px-4 text-center">{cameraError}</p>
-                        : <>
-                            <span className="text-3xl">📷</span>
-                            <p className="text-xs text-gray-400">Camera off</p>
-                          </>
-                      }
-                    </div>
-                  )}
-                  {/* Face guide oval */}
-                  {cameraActive && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="border-2 border-white/50 rounded-full"
-                        style={{ width: "45%", height: "75%", boxShadow: "0 0 0 9999px rgba(0,0,0,0.3)" }} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Camera controls */}
-                <div className="flex gap-2">
-                  {!cameraActive ? (
-                    <button type="button" onClick={startCamera}
-                      className="flex-1 text-sm bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-medium">
-                      Start Camera
-                    </button>
-                  ) : (
-                    <>
-                      <button type="button" onClick={captureFrame}
-                        className="flex-1 text-sm bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-medium">
-                        📸 Capture ({photos.length})
-                      </button>
-                      <button type="button" onClick={stopCamera}
-                        className="px-3 py-2 text-sm bg-gray-200 dark:bg-slate-600 hover:bg-gray-300 dark:hover:bg-slate-500 text-gray-700 dark:text-slate-200 rounded-lg">
-                        Stop
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* UPLOAD mode */}
-            {photoMode === "upload" && (
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-300 dark:border-slate-600 hover:border-indigo-400 rounded-lg p-5 text-center cursor-pointer transition-colors">
-                <div className="text-2xl mb-1">📤</div>
-                <p className="text-sm text-gray-600 dark:text-slate-300 font-medium">Click to browse files</p>
-                <p className="text-xs text-gray-400 mt-0.5">JPG, PNG · select multiple</p>
-                <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
-                  onChange={(e) => handleFileSelect(e.target.files)} />
-              </div>
-            )}
-
-            {/* Shared preview grid */}
-            {previews.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-gray-500 dark:text-slate-400">
-                    {photos.length} photo{photos.length !== 1 ? "s" : ""}
-                    {photos.length > 0 && photos.length < 3 &&
-                      <span className="text-yellow-500 ml-1.5">(add {3 - photos.length} more for best results)</span>}
-                    {photos.length >= 3 && <span className="text-green-500 ml-1.5">✓ good to go</span>}
-                  </span>
-                  <button type="button" onClick={() => { setPhotos([]); setPreviews([]); }}
-                    className="text-xs text-red-500 hover:underline">Clear all</button>
-                </div>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {previews.map((url, i) => (
-                    <div key={i} className="relative group">
-                      <img src={url} alt="" className="w-full aspect-square object-cover rounded-lg border border-gray-200 dark:border-slate-600" />
-                      <button type="button" onClick={() => removePhoto(i)}
-                        className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center leading-none">
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {photos.length === 0 && (
-              <p className="text-xs text-gray-400 dark:text-slate-500 text-center">
-                No photos added — you can enroll the face later from the Students list.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="flex gap-3 justify-end pt-1">
-        <button type="button" onClick={() => { stopCamera(); onClose(); }}
-          className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
-          Cancel
-        </button>
-        <button type="submit" disabled={saving}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-60">
-          {saving ? "Saving…" : isEdit ? "Save Changes" : photos.length > 0 ? `Add Student + ${photos.length} Photo${photos.length !== 1 ? "s" : ""}` : "Add Student"}
-        </button>
-      </div>
-    </form>
   );
 }
 
@@ -614,21 +604,21 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl border border-gray-200 dark:border-slate-700 max-h-[92vh] flex flex-col">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative glass-hi rounded-2xl shadow-glass w-full max-w-2xl border border-white/10 max-h-[92vh] flex flex-col">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
           <div>
-            <h2 className="text-lg font-semibold">Face Enrollment — {current.name}</h2>
-            <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{current.student_code} · {current.class} · {current.house_name}</p>
+            <h2 className="text-lg font-semibold text-white">Face Enrollment — {current.name}</h2>
+            <p className="text-xs text-ink-secondary mt-0.5">{current.student_code} · Class {current.standard}{current.section} · {current.house_name}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">✕</button>
+          <button onClick={onClose} className="text-ink-secondary hover:text-white text-xl leading-none w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/5">✕</button>
         </div>
 
         <div className="px-6 py-5 flex-1 overflow-y-auto space-y-5">
           {/* Status Banner */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium ${status.color}`}>
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium border ${status.color}`}>
             <div className="text-lg">
               {current.enrollment_status === "enrolled" && "✅"}
               {current.enrollment_status === "photos_ready" && "📸"}
@@ -652,10 +642,10 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
 
           {/* Enrollment progress banner */}
           {(enrolling || enrollMsg) && (
-            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm ${
-              enrollMsg.includes("successfully") ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300" :
-              enrollMsg.includes("offline") || enrollMsg.includes("longer") ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300" :
-              "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300"
+            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm border ${
+              enrollMsg.includes("successfully") ? "bg-green-500/10 border-green-500/25 text-green-400" :
+              enrollMsg.includes("offline") || enrollMsg.includes("longer") ? "bg-yellow-500/10 border-yellow-500/25 text-yellow-400" :
+              "bg-cyan-500/10 border-cyan-500/25 text-cyan-400"
             }`}>
               {enrolling && <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />}
               {!enrolling && enrollMsg.includes("successfully") && <span>✅</span>}
@@ -665,23 +655,19 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
           )}
 
           {/* Mode Tabs */}
-          <div className="flex rounded-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+          <div className="flex rounded-lg border border-white/10 overflow-hidden">
             <button
               onClick={() => handleModeSwitch("camera")}
               className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
-                mode === "camera"
-                  ? "bg-indigo-600 text-white"
-                  : "text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700"
+                mode === "camera" ? "bg-white text-black" : "text-ink-secondary hover:bg-white/5"
               }`}
             >
               📷 Use Camera
             </button>
             <button
               onClick={() => handleModeSwitch("upload")}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors border-l border-gray-200 dark:border-slate-700 ${
-                mode === "upload"
-                  ? "bg-indigo-600 text-white"
-                  : "text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700"
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors border-l border-white/10 ${
+                mode === "upload" ? "bg-white text-black" : "text-ink-secondary hover:bg-white/5"
               }`}
             >
               📤 Upload Files
@@ -691,7 +677,7 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
           {/* === CAMERA MODE === */}
           {mode === "camera" && (
             <div className="space-y-4">
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 text-xs text-blue-800 dark:text-blue-300">
+              <div className="bg-cyan-500/10 border border-cyan-500/25 rounded-xl p-3 text-xs text-cyan-300">
                 <strong>Tips:</strong> Capture 3–5 photos · Vary angles (front, slight left/right) · Use good lighting · No glasses or masks
               </div>
 
@@ -716,7 +702,7 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
                     ) : (
                       <>
                         <div className="text-4xl">📷</div>
-                        <p className="text-sm text-gray-400">Camera not started</p>
+                        <p className="text-sm text-ink-faint">Camera not started</p>
                       </>
                     )}
                   </div>
@@ -733,26 +719,13 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
               {/* Camera controls */}
               <div className="flex gap-3">
                 {!cameraActive ? (
-                  <button
-                    onClick={startCamera}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2.5 rounded-lg"
-                  >
-                    Start Camera
-                  </button>
+                  <Button onClick={startCamera} className="flex-1">Start Camera</Button>
                 ) : (
                   <>
-                    <button
-                      onClick={captureFrame}
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2.5 rounded-lg"
-                    >
+                    <Button onClick={captureFrame} variant="success" className="flex-1">
                       📸 Capture ({capturedFiles.length} / 5)
-                    </button>
-                    <button
-                      onClick={stopCamera}
-                      className="px-4 py-2.5 bg-gray-200 dark:bg-slate-600 hover:bg-gray-300 dark:hover:bg-slate-500 text-gray-700 dark:text-slate-200 text-sm font-medium rounded-lg"
-                    >
-                      Stop
-                    </button>
+                    </Button>
+                    <Button onClick={stopCamera} variant="secondary">Stop</Button>
                   </>
                 )}
               </div>
@@ -761,17 +734,17 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
               {capturedPreviews.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                    <span className="text-sm font-medium text-white">
                       {capturedPreviews.length} captured
-                      {capturedPreviews.length < 3 && <span className="text-yellow-500 ml-2">(need at least 3)</span>}
+                      {capturedPreviews.length < 3 && <span className="text-yellow-400 ml-2">(need at least 3)</span>}
                     </span>
-                    <button onClick={() => { setCapturedFiles([]); setCapturedPreviews([]); }} className="text-xs text-red-500 hover:underline">Clear all</button>
+                    <button onClick={() => { setCapturedFiles([]); setCapturedPreviews([]); }} className="text-xs text-red-400 hover:underline">Clear all</button>
                   </div>
                   <div className="grid grid-cols-5 gap-2">
                     {capturedPreviews.map((url, i) => (
                       <div key={i} className="relative group">
                         <img src={url} alt={`Capture ${i + 1}`}
-                          className="w-full aspect-square object-cover rounded-lg border border-gray-200 dark:border-slate-600" />
+                          className="w-full aspect-square object-cover rounded-lg border border-white/10" />
                         <button
                           onClick={() => removeCapture(i)}
                           className="absolute top-0.5 right-0.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
@@ -779,13 +752,13 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
                       </div>
                     ))}
                   </div>
-                  <button
+                  <Button
                     onClick={() => submitPhotos(capturedFiles)}
                     disabled={uploading || capturedFiles.length < 3}
-                    className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+                    className="w-full mt-3"
                   >
                     {uploading ? "Uploading…" : `Save ${capturedFiles.length} Photo${capturedFiles.length !== 1 ? "s" : ""}`}
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -794,7 +767,7 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
           {/* === UPLOAD MODE === */}
           {mode === "upload" && (
             <div className="space-y-4">
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 text-xs text-blue-800 dark:text-blue-300">
+              <div className="bg-cyan-500/10 border border-cyan-500/25 rounded-xl p-3 text-xs text-cyan-300">
                 <strong>Photo Guidelines:</strong> 3–5 photos minimum · Different angles (front, left, right) · Good lighting · No sunglasses or face masks
               </div>
 
@@ -804,39 +777,39 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
                 onDrop={(e) => { e.preventDefault(); setDragOver(false); handleUploadFiles(e.dataTransfer.files); }}
                 onClick={() => fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
-                  dragOver ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20" : "border-gray-300 dark:border-slate-600 hover:border-indigo-400"
+                  dragOver ? "border-white/40 bg-white/5" : "border-white/15 hover:border-white/30"
                 }`}
               >
                 <div className="text-3xl mb-2">📤</div>
-                <div className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                <div className="text-sm font-medium text-white">
                   Drag & drop photos here, or click to browse
                 </div>
-                <div className="text-xs text-gray-400 mt-1">JPG, PNG · Select multiple files · Min 3 required</div>
+                <div className="text-xs text-ink-faint mt-1">JPG, PNG · Select multiple files · Min 3 required</div>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={(e) => handleUploadFiles(e.target.files)} className="hidden" />
               </div>
 
               {uploadPreviews.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                    <span className="text-sm font-medium text-white">
                       {uploadPreviews.length} photo{uploadPreviews.length !== 1 ? "s" : ""} selected
-                      {uploadPreviews.length < 3 && <span className="text-yellow-600 ml-2">(need at least 3)</span>}
+                      {uploadPreviews.length < 3 && <span className="text-yellow-400 ml-2">(need at least 3)</span>}
                     </span>
-                    <button onClick={() => { setUploadFiles([]); setUploadPreviews([]); }} className="text-xs text-red-500 hover:underline">Clear</button>
+                    <button onClick={() => { setUploadFiles([]); setUploadPreviews([]); }} className="text-xs text-red-400 hover:underline">Clear</button>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     {uploadPreviews.map((url, i) => (
                       <img key={i} src={url} alt={`Preview ${i + 1}`}
-                        className="w-full aspect-square object-cover rounded-lg border border-gray-200 dark:border-slate-600" />
+                        className="w-full aspect-square object-cover rounded-lg border border-white/10" />
                     ))}
                   </div>
-                  <button
+                  <Button
                     onClick={() => submitPhotos(uploadFiles)}
                     disabled={uploading || uploadFiles.length < 3}
-                    className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors"
+                    className="w-full mt-3"
                   >
                     {uploading ? "Uploading…" : `Upload ${uploadPreviews.length} Photo${uploadPreviews.length !== 1 ? "s" : ""}`}
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -844,26 +817,24 @@ function FaceEnrollModal({ student, onClose }: { student: any; onClose: () => vo
 
           {/* Currently stored photos info */}
           {current.photo_count > 0 && (
-            <div className="border-t border-gray-100 dark:border-slate-700 pt-4">
+            <div className="border-t border-white/10 pt-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600 dark:text-slate-300">
+                <span className="text-sm text-ink-secondary">
                   {current.photo_count} photo{current.photo_count !== 1 ? "s" : ""} stored on server
                 </span>
-                <button onClick={handleClear} disabled={clearing} className="text-xs text-red-500 hover:underline disabled:opacity-50">
+                <button onClick={handleClear} disabled={clearing} className="text-xs text-red-400 hover:underline disabled:opacity-50">
                   {clearing ? "Clearing…" : "Remove all & re-enroll"}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-ink-faint mt-1">
                 The camera service reads these to build face recognition data. Remove all and re-upload to re-train.
               </p>
             </div>
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-700 flex justify-end">
-          <button onClick={onClose} className="px-5 py-2 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 text-sm font-medium rounded-lg">
-            Done
-          </button>
+        <div className="px-6 py-4 border-t border-white/10 flex justify-end">
+          <Button variant="secondary" onClick={onClose}>Done</Button>
         </div>
       </div>
     </div>

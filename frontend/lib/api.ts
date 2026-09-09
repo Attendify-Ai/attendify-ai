@@ -35,6 +35,7 @@ export const getHouseHistory = (id: number) => api.get(`/houses/${id}/history`).
 export const getStudents = (params?: Record<string, string>) =>
   api.get("/students/", { params }).then((r) => r.data);
 export const getStudent = (id: number) => api.get(`/students/${id}`).then((r) => r.data);
+export const getStudentsByClass = () => api.get("/students/by-class").then((r) => r.data);
 export const createStudent = (form: FormData) =>
   api.post("/students/", form, { headers: { "Content-Type": "multipart/form-data" } }).then((r) => r.data);
 export const updateStudent = (id: number, form: FormData) =>
@@ -78,3 +79,21 @@ export const login = (email: string, password: string) => {
     .then((r) => r.data);
 };
 export const getMe = () => api.get("/auth/me").then((r) => r.data);
+export const resetPassword = (id: number, newPassword: string) =>
+  api.put(`/auth/users/${id}/reset-password`, { new_password: newPassword }).then((r) => r.data);
+export const getActivityLog = (params?: Record<string, string>) =>
+  api.get("/auth/activity-log", { params }).then((r) => r.data);
+
+// ----- House Manager -----
+export const getHouseManagerReport = (params?: Record<string, string>) =>
+  api.get("/house-manager/report", { params }).then((r) => r.data);
+
+export const downloadHouseManagerReport = async (houseName: string, weekStart: string, params?: Record<string, string>) => {
+  const res = await api.get("/house-manager/report/export", { params, responseType: "blob" });
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${houseName}_weekly_report_${weekStart}.xlsx`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+};
