@@ -84,6 +84,10 @@ export const resetPassword = (id: number, newPassword: string) =>
 export const getActivityLog = (params?: Record<string, string>) =>
   api.get("/auth/activity-log", { params }).then((r) => r.data);
 
+// ----- Chat -----
+export const sendChatMessage = (message: string, history?: { role: string; content: string }[]) =>
+  api.post("/chat", { message, history }).then((r) => r.data);
+
 // ----- House Manager -----
 export const getHouseManagerReport = (params?: Record<string, string>) =>
   api.get("/house-manager/report", { params }).then((r) => r.data);

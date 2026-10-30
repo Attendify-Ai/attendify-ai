@@ -1,28 +1,9 @@
-# Python
-__pycache__/
-*.pyc
 venv/
 venv311/
-*.pkl
-
-# Node
+__pycache__/
+*.pyc
+.env
 node_modules/
 .next/
-
-# Environment files
-.env
-.env.local
-
-# Database
-*.db
-*.sqlite
-
-# Face data
-known_faces/
-uploads/
-
-# OS
 .DS_Store
-
-# ChromaDB
-chroma_db/
+backend/uploads/*

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getStoredUser } from "@/lib/auth";
 import Navbar from "./Navbar";
 import Logo from "@/components/ui/Logo";
+import ChatBot from "@/components/ui/ChatBot";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -49,6 +50,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </motion.div>
         </AnimatePresence>
       </main>
+      <ChatBot />
     </div>
   );
 }

@@ -91,3 +91,40 @@ def process_frame(payload: ProcessFramePayload, db: Session = Depends(get_db)):
         "points_deducted": points,
         "entry_id": entry.id,
     }
+
+# ── PIR Anti-Spoof Trigger ──────────────────────────────────────────
+from fastapi import Request
+import threading
+
+_pir_lock = threading.Lock()
+_pir_triggered: bool = False
+_pir_trigger_time: datetime | None = None
+PIR_EXPIRY_SECONDS = 3
+
+
+@router.post("/pir-trigger")
+async def pir_trigger():
+    global _pir_triggered, _pir_trigger_time
+    with _pir_lock:
+        _pir_triggered = True
+        _pir_trigger_time = datetime.now()
+    print(f"✅ PIR trigger received at {datetime.now().strftime('%H:%M:%S')} — real person confirmed")
+    return {"status": "ok", "message": "PIR trigger received"}
+
+
+def is_pir_active() -> bool:
+    global _pir_triggered, _pir_trigger_time
+    with _pir_lock:
+        if not _pir_triggered or _pir_trigger_time is None:
+            return False
+        elapsed = (datetime.now() - _pir_trigger_time).total_seconds()
+        if elapsed >= PIR_EXPIRY_SECONDS:
+            _pir_triggered = False
+            _pir_trigger_time = None
+            return False
+        return True
+
+@router.get("/pir-status")
+def pir_status():
+    active = is_pir_active()
+    return {"active": active}

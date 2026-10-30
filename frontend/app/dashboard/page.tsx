@@ -206,52 +206,7 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Recent activity */}
-      <GlassCard hover={false} className="overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/8 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">Recent Activity</h2>
-          <span className="flex items-center gap-1.5 text-[11px] text-ink-secondary">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            live
-          </span>
-        </div>
-        <div className="divide-y divide-white/5">
-          {!loading && recent.length === 0 && (
-            <div className="px-6 py-10 text-center text-ink-faint text-sm">No late entries yet today</div>
-          )}
-          {loading && recent.length === 0 &&
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="px-6 py-4"><Skeleton className="h-5 w-full" /></div>
-            ))}
-          <AnimatePresence initial={false}>
-            {recent.map((e: any) => (
-              <motion.div
-                key={e.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="px-6 py-3.5 flex items-center justify-between text-sm hover:bg-white/[0.02] transition-colors"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ background: houseColour({ name: e.house_name }) }}
-                  />
-                  <div className="min-w-0">
-                    <div className="font-medium text-white truncate">{e.student_name || "Unidentified"}</div>
-                    <div className="text-xs text-ink-secondary">
-                      {e.house_name} · {e.arrival_time?.slice(0, 5)} · {e.minutes_late} min late
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-red-400 font-semibold text-xs">-{e.points_deducted}</span>
-                  <Badge label={e.status} />
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      </GlassCard>
+     
 
       {/* Point history panel */}
       {selectedHouse && (

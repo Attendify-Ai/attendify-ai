@@ -9,7 +9,7 @@ import os
 models.Base.metadata.create_all(bind=engine)
 run_migrations(engine)
 
-from routers import auth, houses, students, late_entries, analytics, calendar, recognition, house_manager
+from routers import auth, houses, students, late_entries, analytics, calendar, recognition, house_manager, chat
 from services.scheduler_service import generate_weekly_reports_job
 
 app = FastAPI(title="Attendify.ai API", version="1.0.0")
@@ -31,6 +31,7 @@ app.include_router(analytics.router, prefix=PREFIX)
 app.include_router(calendar.router, prefix=PREFIX)
 app.include_router(recognition.router, prefix=PREFIX)
 app.include_router(house_manager.router, prefix=PREFIX)
+app.include_router(chat.router, prefix=PREFIX)
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(generate_weekly_reports_job, "cron", day_of_week="mon", hour=6, minute=0)

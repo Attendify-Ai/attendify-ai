@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearAuth, getStoredUser, dashboardHome } from "@/lib/auth";
 import Logo from "@/components/ui/Logo";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
@@ -84,6 +85,7 @@ export default function Navbar() {
           >
             Sign out
           </button>
+          <ThemeToggle />
         </div>
       </div>
     </header>

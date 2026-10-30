@@ -123,3 +123,104 @@ body {
   filter: blur(90px);
   opacity: 0.35;
 }
+
+/* ───────────────────────────────────────────────────────────────
+   Light ("paper") theme — toggled by adding `light` to <html>.
+   The app's utilities are dark-first (text-white, border-white/8, …),
+   so these rules remap them instead of touching every component.
+   ─────────────────────────────────────────────────────────────── */
+html.light {
+  --background: #F5F0E8;
+  --foreground: #1A1A2E;
+  --card: #EDE8DC;
+  --nav: #DDD8CC;
+  --line: #C8BFA8;
+  --accent: #2D6A4F;
+  --ink-2: #4A4A5E;
+  --ink-3: #6B6658;
+  color-scheme: light;
+}
+
+html.light * { border-color: var(--line); }
+html.light ::selection { background: rgba(45, 106, 79, 0.25); }
+html.light ::-webkit-scrollbar-thumb { background: rgba(26, 26, 46, 0.2); }
+html.light ::-webkit-scrollbar-thumb:hover { background: rgba(26, 26, 46, 0.35); }
+
+/* Surfaces */
+html.light .bg-bg,
+html.light .ambient-bg { background: var(--background); }
+html.light .bg-surface { background: var(--card); }
+html.light .glass,
+html.light .glass-hi {
+  background: var(--card);
+  border-color: var(--line);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html.light header.glass { background: var(--nav); }
+html.light .shadow-glass { box-shadow: 0 4px 16px rgba(26, 26, 46, 0.08); }
+html.light .skeleton {
+  background: linear-gradient(90deg, #E2DCCD 25%, #D6CFBD 37%, #E2DCCD 63%);
+  background-size: 400% 100%;
+}
+
+/* Text */
+html.light .text-white,
+html.light .hover\:text-white:hover { color: var(--foreground); }
+html.light .text-ink-secondary { color: var(--ink-2); }
+html.light .text-ink-faint,
+html.light .placeholder-ink-faint::placeholder { color: var(--ink-3); }
+html.light .text-gradient {
+  background: linear-gradient(180deg, #1A1A2E 0%, #2D6A4F 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+/* Keep white text on coloured fills (e.g. the avatar gradient) */
+html.light .bg-gradient-to-br.text-white { color: #ffffff; }
+
+/* Translucent white fills → faint navy tints */
+html.light .bg-white\/5,
+html.light .bg-white\/8,
+html.light .bg-white\/10,
+html.light .hover\:bg-white\/5:hover,
+html.light .hover\:bg-white\/10:hover { background-color: rgba(26, 26, 46, 0.06); }
+html.light .bg-white\/\[0\.02\],
+html.light .bg-white\/\[0\.03\],
+html.light .bg-white\/\[0\.04\],
+html.light .bg-white\/\[0\.06\],
+html.light .hover\:bg-white\/\[0\.03\]:hover { background-color: rgba(255, 255, 255, 0.45); }
+
+/* Borders */
+html.light [class*="border-white/"],
+html.light .hover\:border-white\/20:hover,
+html.light .hover\:border-white\/30:hover { border-color: var(--line); }
+html.light .divide-white\/5 > :not([hidden]) ~ :not([hidden]) { border-color: var(--line); }
+html.light .focus\:border-white\/30:focus,
+html.light .focus\:border-white\/40:focus { border-color: var(--accent); }
+
+/* Primary (white-on-black) buttons → forest green */
+html.light .bg-white.text-black {
+  background: var(--accent);
+  color: #F5F0E8;
+  box-shadow: none;
+}
+html.light .bg-white.text-black:hover { background: #24563F; }
+
+/* Status colours: the -400 shades are tuned for dark; darken for paper */
+html.light .text-green-400 { color: #15803d; }
+html.light .text-red-400 { color: #b91c1c; }
+html.light .text-amber-400,
+html.light .text-yellow-400 { color: #a16207; }
+html.light .text-blue-400 { color: #1d4ed8; }
+html.light .text-orange-400 { color: #c2410c; }
+html.light .text-purple-400 { color: #7e22ce; }
+html.light .text-sky-400 { color: #0369a1; }
+
+/* Recharts: grid, axis labels and the dark inline-styled tooltip */
+html.light .recharts-cartesian-grid line { stroke: var(--line); }
+html.light .recharts-cartesian-axis-tick-value { fill: var(--ink-2); }
+html.light .recharts-default-tooltip {
+  background: #FBF8F2 !important;
+  border: 1px solid var(--line) !important;
+  color: var(--foreground);
+}

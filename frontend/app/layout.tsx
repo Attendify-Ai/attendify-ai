@@ -16,6 +16,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`dark ${inter.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Apply the saved theme before first paint so there's no dark→light flash */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem("attendify-theme")==="light"){var c=document.documentElement.classList;c.remove("dark");c.add("light")}}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-bg text-white antialiased selection:bg-white/20">
         {children}
       </body>

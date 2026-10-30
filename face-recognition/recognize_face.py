@@ -207,6 +207,15 @@ def log_attendance(student_name, confidence_score, arrival_dt):
         "date": arrival_dt.date().isoformat(),
     }
     try:
+        pir = requests.get(f"{BACKEND_URL}/recognition/pir-status", timeout=2)
+        pir.raise_for_status()
+        if not pir.json().get("active", False):
+            print("SPOOF SUSPECTED — no PIR trigger")
+            return
+    except Exception:
+        pass  # backend unreachable — fall back to logging normally
+
+    try:
         r = requests.post(f"{BACKEND_URL}/recognition/process-frame", json=payload, timeout=5)
         r.raise_for_status()
         result = r.json()
