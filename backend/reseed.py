@@ -1,5 +1,5 @@
 cat > ~/Desktop/attendify/backend/reseed.py << 'EOF'
-"""Force re-seed: delete and recreate all users with fresh password hashes."""
+""" Force re-seed: delete and recreate all users with fresh password hashes."""
 from database import SessionLocal
 import models
 from services.auth_service import hash_password
